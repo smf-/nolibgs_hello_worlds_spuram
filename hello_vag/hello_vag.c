@@ -28,9 +28,6 @@
 // Sound system
 #include <libsnd.h>
 #include <libspu.h>
-#define ADDRSHIFT 3
-// 0 512k, 1 1mb, 2 2mb, 3 4mb
-
 #define VMODE 0                 // Video Mode : 0 : NTSC, 1: PAL
 #define SCREENXRES 320
 #define SCREENYRES 240
@@ -117,20 +114,10 @@ void initSnd(void){
     SpuSetIRQ(SPU_OFF);
 }
 u_long sendVAGtoRAM(unsigned int VAG_data_size, unsigned char *VAG_data){
-    u_long size = 0;
-    u_long tmp= vag_spu_address;
-    while (VAG_data_size)
-    {
-        u_long block = 0x7e000; if (block > VAG_data_size) block = VAG_data_size;
-        SpuSetTransferStartAddr(tmp >> ADDRSHIFT);                         // Sets a starting address in the sound buffer
-        SpuSetTransferMode(SpuTransByDMA);                              // DMA transfer; can do other processing during transfer
-        block = SpuWrite(VAG_data + sizeof(VAGhdr), block);     // transfer VAG_data_size bytes from VAG_data  address to sound buffer
-        SpuIsTransferCompleted(SPU_TRANSFER_WAIT);                     // Checks whether transfer is completed and waits for completion
-        size += block;
-        tmp += block;
-        VAG_data_size -= block;
-        VAG_data += block;
-    }
+    u_long size;
+    SpuSetTransferMode(SpuTransByDMA);                              // DMA transfer; can do other processing during transfer
+    size = SpuWrite (VAG_data + sizeof(VAGhdr), VAG_data_size);     // transfer VAG_data_size bytes from VAG_data  address to sound buffer
+    SpuIsTransferCompleted (SPU_TRANSFER_WAIT);                     // Checks whether transfer is completed and waits for completion
     return size;
 }
 void setVoiceAttr(unsigned int pitch, long channel, unsigned long soundAddr ){
@@ -177,21 +164,20 @@ int main(void)
     // Ex: 44.1kHz=0x1000 22.05kHz=0x800 etc
     unsigned int pitch =   (SWAP_ENDIAN32(VAGfileHeader->samplingFrequency) << 12) / 44100L; 
     SpuInit();                                                                            // Initialize SPU. Called only once.
-    *((unsigned short*)0x1F801DAC) = 4 + (ADDRSHIFT << 1);
     initSnd();
     //~ // First VAG
-    vag_spu_address   = SpuMalloc(SWAP_ENDIAN32(VAGfileHeader->dataSize) >> ADDRSHIFT) << ADDRSHIFT; // Allocate an area of dataSize bytes in the sound buffer. 
-    spu_start_address = SpuSetTransferStartAddr(vag_spu_address >> ADDRSHIFT) << ADDRSHIFT;          // Sets a starting address in the sound buffer
-    get_start_addr    = SpuGetTransferStartAddr() << ADDRSHIFT;                                      // SpuGetTransferStartAddr() returns current sound buffer transfer start address.
+    vag_spu_address   = SpuMalloc(SWAP_ENDIAN32(VAGfileHeader->dataSize));                // Allocate an area of dataSize bytes in the sound buffer. 
+    spu_start_address = SpuSetTransferStartAddr(vag_spu_address);                         // Sets a starting address in the sound buffer
+    get_start_addr    = SpuGetTransferStartAddr();                                        // SpuGetTransferStartAddr() returns current sound buffer transfer start address.
     transSize         = sendVAGtoRAM(SWAP_ENDIAN32(VAGfileHeader->dataSize), _binary____VAG_hello_poly_vag_start);
     // set VAG to channel 
-    setVoiceAttr(pitch, SPU_0CH, vag_spu_address >> ADDRSHIFT);
+    setVoiceAttr(pitch, SPU_0CH, vag_spu_address);
     initGraph();
     while (1)
     {
         if(!counter){
             playSFX();
-            counter = 8176;
+            counter = 180;
         }
         FntPrint("\nPitch             : %08x-%dKhz", pitch, (SWAP_ENDIAN32(VAGfileHeader->samplingFrequency)) );
         FntPrint("\nSet Start addr    : %08x", vag_spu_address);
