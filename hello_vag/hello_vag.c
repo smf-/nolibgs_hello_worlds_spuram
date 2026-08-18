@@ -105,7 +105,34 @@ void display(void)
     db = !db;
 }
 // Audio initialisation & functions
+// 0 512k, 1 1mb, 2 2mb, 3 4mb
+#define ADDRSHIFT 3
+#define SpuMalloc(a) SpuMalloc((a + (1 << ADDRSHIFT) - 1) >> ADDRSHIFT)
 void initSnd(void){
+    if (ADDRSHIFT)
+    {
+        unsigned int i;
+        volatile unsigned short* SPU_ADDR = (volatile unsigned short*)0x1F801DA6;
+        volatile unsigned short* SPU_DATA = (volatile unsigned short*)0x1F801DA8;
+        volatile unsigned short* SPU_CNT = (volatile unsigned short*)0x1F801DAA;
+        volatile unsigned short* SPU_RAMCTRL = (volatile unsigned short*)0x1F801DAC;
+        volatile unsigned short* SPU_STAT = (volatile unsigned short*)0x1F801DAE;
+        SpuSetMute(SpuOn);
+        *SPU_CNT = (*SPU_CNT & ~0x0030);
+        while (*SPU_STAT & 0x0030);
+        *SPU_RAMCTRL = 4 + (ADDRSHIFT << 1);
+        *SPU_ADDR = 0x0200;
+        for (i = 0; i < 8; i++)
+            *SPU_DATA = 0x0707;
+        *SPU_CNT = (*SPU_CNT & ~0x0030) | 0x10;
+        while ((*SPU_STAT & 0x0430) != 0x10);
+        *SPU_CNT = (*SPU_CNT & ~0x0030);
+        while (*SPU_STAT & 0x0030);
+        SpuSetKey(SpuOn, SPU_ALLCH);
+        SpuSetKey(SpuOff, SPU_ALLCH);
+        SpuSetMute(SpuOff);
+    }
+
     SpuInitMalloc(MALLOC_MAX, spu_malloc_rec);                      // Maximum number of blocks, mem. management table address.
     commonAttributes.mask = (SPU_COMMON_MVOLL | SPU_COMMON_MVOLR);  // Mask which attributes to set
     commonAttributes.mvol.left  = 0x3fff;                           // Master volume left
@@ -114,10 +141,20 @@ void initSnd(void){
     SpuSetIRQ(SPU_OFF);
 }
 u_long sendVAGtoRAM(unsigned int VAG_data_size, unsigned char *VAG_data){
-    u_long size;
-    SpuSetTransferMode(SpuTransByDMA);                              // DMA transfer; can do other processing during transfer
-    size = SpuWrite (VAG_data + sizeof(VAGhdr), VAG_data_size);     // transfer VAG_data_size bytes from VAG_data  address to sound buffer
-    SpuIsTransferCompleted (SPU_TRANSFER_WAIT);                     // Checks whether transfer is completed and waits for completion
+    u_long size = 0;
+    u_long transfer_addr = SpuGetTransferStartAddr();
+    while (VAG_data_size)
+    {
+        u_long block = 0x7efc0; if (block > VAG_data_size) block = VAG_data_size;
+        SpuSetTransferStartAddr(transfer_addr);                     // Sets a starting address in the sound buffer
+        SpuSetTransferMode(SpuTransByDMA);                          // DMA transfer; can do other processing during transfer
+        block = SpuWrite(VAG_data + sizeof(VAGhdr), block);         // transfer VAG_data_size bytes from VAG_data  address to sound buffer
+        SpuIsTransferCompleted(SPU_TRANSFER_WAIT);                  // Checks whether transfer is completed and waits for completion
+        size += block;
+        transfer_addr += block >> ADDRSHIFT;
+        VAG_data_size -= block;
+        VAG_data += block;
+    }
     return size;
 }
 void setVoiceAttr(unsigned int pitch, long channel, unsigned long soundAddr ){
@@ -177,7 +214,7 @@ int main(void)
     {
         if(!counter){
             playSFX();
-            counter = 180;
+            counter = (((transSize * 28) / 16) * (VMODE ? 50 : 60)) / SWAP_ENDIAN32(VAGfileHeader->samplingFrequency);
         }
         FntPrint("\nPitch             : %08x-%dKhz", pitch, (SWAP_ENDIAN32(VAGfileHeader->samplingFrequency)) );
         FntPrint("\nSet Start addr    : %08x", vag_spu_address);
